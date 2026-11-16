@@ -75,6 +75,21 @@ func (p *PKI) renewCertsForCA(ca *CA) error {
 		}
 	}
 
+	return ca.renewIntermediate()
+}
+
+// renewExpiredIntermediate requires ca.mu to be held for writing.
+func (ca *CA) renewExpiredIntermediate() error {
+	// Allow signing with a valid intermediate even if renewal storage is unavailable.
+	if time.Now().Before(ca.interChain[0].NotAfter) {
+		return nil
+	}
+	return ca.renewIntermediate()
+}
+
+// renewIntermediate requires ca.mu to be held for writing.
+func (ca *CA) renewIntermediate() error {
+	log := ca.log
 	// only maintain the intermediate if it's not manually provided in the config
 	if ca.Intermediate == nil {
 		if ca.needsRenewal(ca.interChain[0]) {
@@ -85,6 +100,10 @@ func (p *PKI) renewCertsForCA(ca *CA) error {
 			rootCert, rootKey, err := ca.loadOrGenRoot()
 			if err != nil {
 				return fmt.Errorf("loading root key: %v", err)
+			}
+			now := time.Now()
+			if now.Before(rootCert.NotBefore) || !now.Before(rootCert.NotAfter) {
+				return fmt.Errorf("root certificate is not currently valid")
 			}
 			interCert, interKey, err := ca.genIntermediate(rootCert, rootKey)
 			if err != nil {

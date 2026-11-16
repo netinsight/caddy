@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"time"
 
 	"github.com/caddyserver/certmagic"
@@ -117,6 +118,10 @@ func (iss InternalIssuer) Issue(ctx context.Context, csr *x509.CertificateReques
 	} else {
 		chain := iss.ca.IntermediateCertificateChain()
 		issuerCert = chain[0]
+	}
+
+	if now := time.Now(); now.Before(issuerCert.NotBefore) || !now.Before(issuerCert.NotAfter) {
+		return nil, fmt.Errorf("signing certificate is not currently valid")
 	}
 
 	// ensure issued certificate does not expire later than its issuer
