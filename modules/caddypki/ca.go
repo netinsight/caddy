@@ -220,6 +220,16 @@ func (ca CA) IntermediateKey() crypto.Signer {
 // executes at a later time, always has the only copy of the CA so it can access the latest,
 // renewed certificates since NewAuthority was called. See #4517 and #4669.
 func (ca *CA) NewAuthority(authorityConfig AuthorityConfig) (*authority.Authority, error) {
+	// Renew before the internal issuer clamps the leaf lifetime to the intermediate expiry.
+	if !authorityConfig.SignWithRoot {
+		ca.mu.Lock()
+		err := ca.renewExpiredIntermediate()
+		ca.mu.Unlock()
+		if err != nil {
+			return nil, fmt.Errorf("renewing intermediate: %w", err)
+		}
+	}
+
 	// get the root certificate and the issuer cert+key
 	rootCert := ca.RootCertificate()
 
@@ -243,9 +253,13 @@ func (ca *CA) NewAuthority(authorityConfig AuthorityConfig) (*authority.Authorit
 		// sure it's always fresh, because the intermediate may
 		// renew while Caddy is running (medium lifetime)
 		signerOption = authority.WithX509SignerFunc(func() ([]*x509.Certificate, crypto.Signer, error) {
-			issuerChain := ca.IntermediateCertificateChain()
+			ca.mu.Lock()
+			defer ca.mu.Unlock()
+			if err := ca.renewExpiredIntermediate(); err != nil {
+				return nil, nil, err
+			}
+			issuerChain, issuerKey := ca.interChain, ca.interKey
 			issuerCert := issuerChain[0]
-			issuerKey := ca.IntermediateKey()
 			ca.log.Debug("using intermediate signer",
 				zap.String("serial", issuerCert.SerialNumber.String()),
 				zap.String("not_before", issuerCert.NotBefore.String()),
